@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS request (
+    id UUID PRIMARY KEY,
+    title TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL,
+    createdat TIMESTAMPTZ NOT NULL,
+    updatedat TIMESTAMPTZ NOT NULL
+);
