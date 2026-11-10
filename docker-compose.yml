@@ -6,33 +6,33 @@ services:
     image: postgres:15-alpine
     container_name: postgres_container
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: mysecretpassword
-      POSTGRES_DB: postgres
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./migrations/000001_init.up.sql:/docker-entrypoint-initdb.d/000001_init.up.sql
+      - ./migrations/000001_init.up.sql:/docker-entrypoint-initdb.d/000001_init.up.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 3s
       timeout: 3s
       retries: 5
 
-  # Слой вашего Go-приложения
+  # Слой Go-приложения
   app_server:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: go_app_container
     ports:
-      - "8081:8081"
+      - "${APP_PORT}:8081"
     depends_on:
       postgres_db:
         condition: service_healthy # Ждем, пока СУБД полностью поднимет сокет
     environment:
-      - DATABASE_URL=postgres://postgres:mysecretpassword@postgres_db:5432/postgres?sslmode=disable
+      - DATABASE_URL=${DATABASE_URL}
 
 volumes:
   pgdata:

@@ -1,27 +1,31 @@
-version: "3.8"
+version: '3.8'
 
 services:
+  # Изолированная тестовая СУБД (данные не пересекаются с основной БД)
   postgres_test:
     image: postgres:15-alpine
+    container_name: postgres_test_container
     environment:
-      POSTGRES_USER: test_user
-      POSTGRES_PASSWORD: test_password
-      POSTGRES_DB: tasks_test_db
-    # Пробрасываем sql-миграции для автоматического разворачивания схемы в чистой БД
+      POSTGRES_USER: ${TEST_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD}
+      POSTGRES_DB: ${TEST_POSTGRES_DB}
+    # Внешние порты НЕ пробрасываем наружу во избежание конфликтов с make up
     volumes:
       - ./migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U test_user -d tasks_test_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${TEST_POSTGRES_USER} -d ${TEST_POSTGRES_DB}"]
       interval: 2s
       timeout: 3s
       retries: 10
 
+  # Контейнер для автоматического прогона тестов с детектором гонок
   tests:
     build:
       context: .
       dockerfile: Dockerfile.test
+    container_name: go_test_container
     depends_on:
       postgres_test:
-        condition: service_healthy
+        condition: service_healthy # Ждем полной готовности тестовой СУБД
     environment:
-      DATABASE_URL: postgres://test_user:test_password@postgres_test:5432/tasks_test_db?sslmode=disable
+      - DATABASE_URL=${TEST_DATABASE_URL}
