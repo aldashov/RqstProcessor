@@ -7,12 +7,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"rqst_processor/internal/background"
-	"rqst_processor/internal/database"
-	"rqst_processor/internal/service"
-	"rqst_processor/internal/web"
 	"sync"
 	"syscall"
+	"task_processor/internal/background"
+	"task_processor/internal/database"
+	"task_processor/internal/service"
+	"task_processor/internal/web"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -67,24 +67,28 @@ func main() {
 
 	// Сборка слоев
 	repo := database.NewRepo(pool)
-	chnl_rqst := make(chan *service.Request, 20)
+	chnl_task := make(chan *service.Task, 20)
 	var wg sync.WaitGroup
 
 	// Запуск пула фоновых воркеров
-	background.WorkerInit(chnl_rqst, &wg, appCtx, repo)
+	background.WorkerInit(chnl_task, &wg, appCtx, repo)
 
 	// Инициализация слоя HTTP-хендлеров и роутера
-	rqstHandler := web.NewRqstHandler(repo, chnl_rqst)
+	taskHandler := web.NewTaskHandler(repo, chnl_task)
 
 	mux := http.NewServeMux()
 
 	// Регистрируем эндпоинты
 	// Этот путь отвечает за операции БЕЗ указания ID (Создание и Получение списка)
-	mux.HandleFunc("/rqsts", rqstHandler.HandleCollection)
+	mux.HandleFunc("/tasks", taskHandler.HandleCollection)
 
 	// Этот путь отвечает за операции С УКАЗАНИЕМ ID (Просмотр одного и Удаление)
 	// Наличие слэша на конце "/" для перехвата динамических UUID
-	mux.HandleFunc("/rqsts/", rqstHandler.HandleSingle)
+	mux.HandleFunc("/tasks/", taskHandler.HandleSingle)
+
+	// Эти пути для healthcheck
+	mux.HandleFunc("/health", taskHandler.HealthCheck)
+	mux.HandleFunc("/health/", taskHandler.HealthCheck)
 
 	// Настройка HTTP-сервера с таймаутами защиты (Production-ready)
 	srv := &http.Server{
@@ -123,7 +127,7 @@ func main() {
 	appCancel()
 
 	// Закрываем канал задач
-	close(chnl_rqst)
+	close(chnl_task)
 	slog.Info("Канал закрыт. Ожидание завершения обработки буфера...")
 
 	// Ждем, пока воркеры полностью опустошат буфер (до 20 элементов)

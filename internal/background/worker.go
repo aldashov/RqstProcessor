@@ -3,66 +3,74 @@ package background
 import (
 	"context"
 	"log/slog"
-	"rqst_processor/internal/service"
 	"sync"
+	"task_processor/internal/service"
 	"time"
 )
 
+const DefaultTaskDuration = 7 * time.Second
+
+// ф-ия обработки одной задачи
+func processTask(repo service.TaskRepo, task *service.Task, duration time.Duration) {
+	task.UpdatedAt = time.Now()
+	task.Status = "processing"
+
+	if err := repo.RecUpdate(context.Background(), task); err != nil {
+		slog.Error("Не удалось обновить статус запроса в базе данных",
+			slog.String("id", task.Id),
+			"error", err,
+		)
+		return
+	}
+
+	slog.Info("Запрос взят в фоновую обработку",
+		slog.String("id", task.Id),
+		slog.String("title", task.Title),
+	)
+
+	// задержка без прерывания при shutdown
+	time.Sleep(duration)
+
+	task.Status = "done"
+	task.UpdatedAt = time.Now()
+
+	if err := repo.RecUpdate(context.Background(), task); err != nil {
+		slog.Error("Не удалось обновить статус запроса в базе данных",
+			slog.String("id", task.Id),
+			"error", err,
+		)
+		return
+	}
+
+	slog.Info("Запрос обработан",
+		slog.String("id", task.Id),
+		slog.String("title", task.Title),
+	)
+}
+
 // ф-ия запуска Воркера
-func WorkerRun(chnl <-chan *service.Request, wg *sync.WaitGroup, pCtx context.Context, repo service.RqstRepo) error {
+func WorkerRun(chnl <-chan *service.Task, wg *sync.WaitGroup, pCtx context.Context, repo service.TaskRepo) {
+	_ = WorkerRunWithDuration(chnl, wg, pCtx, repo, DefaultTaskDuration)
+}
+
+// ф-ия запуска Воркера с указанием длительности обработки
+func WorkerRunWithDuration(chnl <-chan *service.Task, wg *sync.WaitGroup, pCtx context.Context, repo service.TaskRepo, duration time.Duration) error {
 	//завершение таска в WaitGroup при выходе из функции
 	defer wg.Done()
 
 	for {
 		select {
 		case <-pCtx.Done():
-			// контекст отменен. проверка, остались ли еще таски в канале
-			for rqst := range chnl {
-				//обновление статуса записи запроса
-				rqst.UpdatedAt = time.Now()
-				rqst.Status = "processing"
-
-				err := repo.RecUpdate(context.Background(), rqst)
-				if err != nil {
-					slog.Error("Не удалось обновить статус запроса в базе данных",
-						slog.String("id", rqst.Id),
-						"error", err,
-					)
-					continue
-				}
-				slog.Info("Запрос обработан",
-					slog.String("id", rqst.Id),
-					slog.String("title", rqst.Title),
-				)
-
-				//ожидание в 1 сек для эмуляции какой-то деятельности
-				time.Sleep(1 * time.Second)
-				//обновление статуса заявки
-				rqst.Status = "done"
-				rqst.UpdatedAt = time.Now()
-
-				err = repo.RecUpdate(context.Background(), rqst)
-				if err != nil {
-					slog.Error("Не удалось обновить статус запроса в базе данных",
-						slog.String("id", rqst.Id),
-						"error", err,
-					)
-					continue
-				}
-
-				slog.Info("Запрос обработан",
-					slog.String("id", rqst.Id),
-					slog.String("title", rqst.Title),
-				)
+			// контекст отменен. дорабатываем все оставшиеся в буфере канала задачи до закрытия канала
+			for task := range chnl {
+				processTask(repo, task, duration)
 			}
-
-			// контекст приложения отменен (Graceful Shutdown)
-			slog.Error("Завершение работы по сигналу контекста",
-				"error", pCtx.Err(),
+			slog.Info("Завершение работы воркера после обработки остатка очереди",
+				"reason", pCtx.Err(),
 			)
 			return pCtx.Err()
 
-		case rqst, ok := <-chnl:
+		case task, ok := <-chnl:
 			//получение значения из канала
 			if !ok {
 				//канал закрыт( все задачи закрыты)
@@ -70,58 +78,14 @@ func WorkerRun(chnl <-chan *service.Request, wg *sync.WaitGroup, pCtx context.Co
 				return nil
 			}
 
-			//обновление статуса записи запроса
-			rqst.UpdatedAt = time.Now()
-			rqst.Status = "processing"
-
-			err := repo.RecUpdate(pCtx, rqst)
-			if err != nil {
-				slog.Error("Не удалось обновить статус запроса в базе данных",
-					slog.String("id", rqst.Id),
-					"error", err,
-				)
-				continue
-			}
-			slog.Info("Запрос взят в фоновую обработку",
-				slog.String("id", rqst.Id),
-				slog.String("title", rqst.Title),
-			)
-
-			//ожидание в 1 сек для эмуляции какой-то деятельности
-			select {
-			case <-time.After(1 * time.Second):
-				//обновление статуса заявки
-				rqst.Status = "done"
-				rqst.UpdatedAt = time.Now()
-
-				err = repo.RecUpdate(pCtx, rqst)
-				if err != nil {
-					slog.Error("Не удалось обновить статус запроса в базе данных",
-						slog.String("id", rqst.Id),
-						"error", err,
-					)
-					continue
-				}
-
-				slog.Info("Запрос обработан",
-					slog.String("id", rqst.Id),
-					slog.String("title", rqst.Title),
-				)
-
-			case <-pCtx.Done():
-				// если во время симуляции приложение экстренно завершают
-				slog.Error("Приложение было закрыто при выполнении запроса",
-					slog.String("title", rqst.Title),
-					"error", err,
-				)
-				return pCtx.Err()
-			}
+			// Доводим текущую задачу до статуса done без обрыва по внутреннему select
+			processTask(repo, task, duration)
 		}
 	}
 }
 
 // ф-ия инициализации воркеров
-func WorkerInit(chnl <-chan *service.Request, wg *sync.WaitGroup, pCtx context.Context, repo service.RqstRepo) (err error) {
+func WorkerInit(chnl <-chan *service.Task, wg *sync.WaitGroup, pCtx context.Context, repo service.TaskRepo) (err error) {
 	// запуск трех воркеров
 	for i := 0; i < 3; i++ {
 		//увеличение счетчика заданий группы воркеров

@@ -1,3 +1,16 @@
-.env 
-.vscode/ 
-*.exe 
+# Скомпилированные бинарники Go
+server
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Переменные окружения с локальными паролями
+.env
+
+# Кэш Docker и системные папки IDE
+.idea/
+.vscode/
+*.log

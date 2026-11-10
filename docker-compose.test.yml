@@ -1,0 +1,27 @@
+version: "3.8"
+
+services:
+  postgres_test:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: tasks_test_db
+    # Пробрасываем sql-миграции для автоматического разворачивания схемы в чистой БД
+    volumes:
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d tasks_test_db"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    depends_on:
+      postgres_test:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://test_user:test_password@postgres_test:5432/tasks_test_db?sslmode=disable

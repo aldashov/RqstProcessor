@@ -6,7 +6,7 @@ import (
 )
 
 // тип Запрос
-type Request struct {
+type Task struct {
 	Id        string    `json:"id"`
 	Title     string    `json:"title"`
 	Status    string    `json:"status"`
@@ -14,10 +14,11 @@ type Request struct {
 	UpdatedAt time.Time `json:"updatedat"`
 }
 
-type RqstRepo interface {
-	RecInsert(ctx context.Context, rqst *Request) error
-	RecUpdate(ctx context.Context, rqst *Request) error
-	RecDelete(ctx context.Context, rqst *Request) error
-	RecGetAll(ctx context.Context) ([]*Request, error)
-	RecGetbyId(ctx context.Context, id string) (*Request, error)
+type TaskRepo interface {
+	RecInsert(ctx context.Context, task *Task) error
+	RecUpdate(ctx context.Context, task *Task) error
+	RecDelete(ctx context.Context, task *Task) error
+	RecGetAll(ctx context.Context) ([]*Task, error)
+	RecGetbyId(ctx context.Context, id string) (*Task, error)
+	Ping(ctx context.Context) error
 }

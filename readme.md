@@ -1,9 +1,9 @@
-# Request Processor Service
+# Task Processor Service
 
 Асинхронный процессор задач на Go со слоем персистентности в PostgreSQL и отказоустойчивым пулом воркеров.
 
 ## Технологический стек
-- Go 1.23+ ( layered architecture )
+- Go 1.27+ ( layered architecture )
 - PostgreSQL 15 ( pgxpool driver )
 - Docker / Docker Compose ( Multi-stage build )
 - Structured logging ( log/slog )
@@ -19,7 +19,7 @@
    ```
 
 ## Примеры API запросов (Порт 8081)
-- **Создание задачи (POST):** `curl -X POST http://localhost:8081/rqsts -H "Content-Type: application/json" -d "{\"title\":\"Новая задача\"}"`
-- **Получение списка (GET):** `curl -X GET http://localhost:8081/rqsts`
-- **Удаление по ID (DELETE):** `curl -X DELETE http://localhost:8081/rqsts/uuid_строка`
-- **Healthcheck (GET):** `curl -X GET http://localhost:8081/health`
+- **Создание задачи (POST):** `curl -X POST http://localhost:8081/tasks -H "Content-Type: application/json" -d "{\"title\":\"Новая задача\"}"`
+- **Получение списка (GET):** `curl -X GET http://localhost:8081/tasks` ; `curl -X GET http://localhost:8081/tasks/`
+- **Удаление по ID (DELETE):** `curl -X DELETE http://localhost:8081/tasks/uuid_строка`
+- **Healthcheck (GET):** `curl -X GET http://localhost:8081/health` ; `curl -X GET http://localhost:8081/health/`

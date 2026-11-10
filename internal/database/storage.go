@@ -3,7 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
-	"rqst_processor/internal/service"
+	"task_processor/internal/service"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,12 +19,12 @@ func NewRepo(pool *pgxpool.Pool) *Repository {
 }
 
 // добавление записи в т-цу БД
-func (rd *Repository) RecInsert(pCtx context.Context, rqst *service.Request) (err error) {
+func (rd *Repository) RecInsert(pCtx context.Context, task *service.Task) (err error) {
 	//создание локального контекста для пула
 	l_ctx, l_ctx_cncl := context.WithTimeout(pCtx, 2*time.Second)
 	defer l_ctx_cncl()
 
-	_, err = rd.pool.Exec(l_ctx, "insert into request (id, title, status, createdat, updatedat) values ($1, $2, $3, $4, $5)", rqst.Id, rqst.Title, rqst.Status, rqst.CreatedAt, rqst.UpdatedAt)
+	_, err = rd.pool.Exec(l_ctx, "insert into request (id, title, status, createdat, updatedat) values ($1, $2, $3, $4, $5)", task.Id, task.Title, task.Status, task.CreatedAt, task.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -33,12 +33,12 @@ func (rd *Repository) RecInsert(pCtx context.Context, rqst *service.Request) (er
 }
 
 // обновление записи в т-це БД
-func (rd *Repository) RecUpdate(pCtx context.Context, rqst *service.Request) (err error) {
+func (rd *Repository) RecUpdate(pCtx context.Context, task *service.Task) (err error) {
 	//создание локального контекста для пула
 	lCtx, lCtxCncl := context.WithTimeout(pCtx, 2*time.Second)
 	defer lCtxCncl()
 
-	_, err = rd.pool.Exec(lCtx, "update request set status = $1, updatedat = $2 where id = $3", rqst.Status, rqst.UpdatedAt, rqst.Id)
+	_, err = rd.pool.Exec(lCtx, "update request set status = $1, updatedat = $2 where id = $3", task.Status, task.UpdatedAt, task.Id)
 	if err != nil {
 		return err
 	}
@@ -47,26 +47,26 @@ func (rd *Repository) RecUpdate(pCtx context.Context, rqst *service.Request) (er
 }
 
 // удаление записи из т-цы БД
-func (rd *Repository) RecDelete(pCtx context.Context, rqst *service.Request) (err error) {
+func (rd *Repository) RecDelete(pCtx context.Context, task *service.Task) (err error) {
 	//создание локального контекста для пула
 	lCtx, lCtx_cncl := context.WithTimeout(pCtx, 2*time.Second)
 	defer lCtx_cncl()
 
-	cTag, err := rd.pool.Exec(lCtx, "delete from request where id = $1 and status != $2", rqst.Id, "processing")
+	cTag, err := rd.pool.Exec(lCtx, "delete from request where id = $1 and status != $2", task.Id, "processing")
 	if err != nil {
 		return err
 	}
 
 	if cTag.RowsAffected() == 0 {
 
-		return fmt.Errorf("There are no deleted records with key %v", rqst.Title)
+		return fmt.Errorf("There are no deleted records with key %v", task.Title)
 	}
 
 	return err
 }
 
 // получение списка всех записей из БД
-func (rd *Repository) RecGetAll(pCtx context.Context) ([]*service.Request, error) {
+func (rd *Repository) RecGetAll(pCtx context.Context) ([]*service.Task, error) {
 	// Создаем локальный контекст с таймаутом на чтение всей таблицы
 	lCtx, lCtxCncl := context.WithTimeout(pCtx, 5*time.Second)
 	defer lCtxCncl()
@@ -78,17 +78,17 @@ func (rd *Repository) RecGetAll(pCtx context.Context) ([]*service.Request, error
 	// Гарантируем закрытие дескриптора rows для предотвращения утечки пула соединений
 	defer rows.Close()
 
-	var rqst []*service.Request
+	var task []*service.Task
 
 	// Цикл сканирования строк базы данных
 	for rows.Next() {
-		t := &service.Request{}
+		t := &service.Task{}
 		// Сканируем поля строго в том порядке, в котором они указаны в SELECT
 		err := rows.Scan(&t.Id, &t.Title, &t.Status, &t.CreatedAt, &t.UpdatedAt)
 		if err != nil {
 			return nil, err
 		}
-		rqst = append(rqst, t) // Добавляем заполненный объект в массив
+		task = append(task, t) // Добавляем заполненный объект в массив
 	}
 
 	// Проверяем, не прервалось ли чтение из-за ошибок внутри цикла rows.Next()
@@ -96,17 +96,17 @@ func (rd *Repository) RecGetAll(pCtx context.Context) ([]*service.Request, error
 		return nil, err
 	}
 
-	return rqst, nil
+	return task, nil
 }
 
 // получение уникальной записи из БД по ключу id
 // RecGetbyId ищет ровно одну задачу по её ID.
 // Если задача не найдена, возвращает ошибку pgx.ErrNoRows.
-func (rd *Repository) RecGetbyId(pCtx context.Context, id string) (*service.Request, error) {
+func (rd *Repository) RecGetbyId(pCtx context.Context, id string) (*service.Task, error) {
 	lCtx, lCtxCncl := context.WithTimeout(pCtx, 3*time.Second)
 	defer lCtxCncl()
 
-	t := &service.Request{}
+	t := &service.Task{}
 
 	// Используем QueryRow вместо Query. Метод Scan вызывается цепочкой (chaining).
 	err := rd.pool.QueryRow(lCtx,
@@ -121,4 +121,11 @@ func (rd *Repository) RecGetbyId(pCtx context.Context, id string) (*service.Requ
 	}
 
 	return t, nil
+}
+
+func (rd *Repository) Ping(pCtx context.Context) error {
+	lCtx, cancel := context.WithTimeout(pCtx, 2*time.Second)
+	defer cancel()
+
+	return rd.pool.Ping(lCtx)
 }
