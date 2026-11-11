@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,11 +16,12 @@ import (
 	"task_processor/internal/web"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 // инициализация БД
-func db_init() (pCtx context.Context, pool *pgxpool.Pool, err error) {
+func db_init() (pCtx context.Context, db *gorm.DB, sqlDB *sql.DB, err error) {
 	pCtx = context.Background()
 
 	//Считываем строку подключения из переменных окружения
@@ -30,20 +32,26 @@ func db_init() (pCtx context.Context, pool *pgxpool.Pool, err error) {
 		connstr = "postgres://postgres:your_password@localhost:5432/postgres?sslmode=disable"
 	}
 
-	pool, err = pgxpool.New(pCtx, connstr)
+	db, err = gorm.Open(postgres.Open(connstr), &gorm.Config{})
 	if err != nil {
-		fmt.Printf("[CTXINIT] There is error while creating pool %v", err.Error())
-		return
+		fmt.Printf("[CTXINIT] There is error while creating gorm db %v", err.Error())
+		return pCtx, nil, nil, err
 	}
 
-	//проверка соединения с БД
-	err = pool.Ping(pCtx)
+	sqlDB, err = db.DB()
+	if err != nil {
+		fmt.Printf("[DBINIT] There is error while getting sql.DB %v", err.Error())
+		return pCtx, db, nil, err
+	}
+
+	// проверка соединения с БД
+	err = sqlDB.PingContext(pCtx)
 	if err != nil {
 		fmt.Printf("[DBINIT] There is error while trying to connect to DataBase %v", err.Error())
-		return pCtx, pool, err
+		return pCtx, db, sqlDB, err
 	}
 
-	return pCtx, pool, err
+	return pCtx, db, sqlDB, nil
 }
 
 func main() {
@@ -57,16 +65,16 @@ func main() {
 	appCtx, appCancel := context.WithCancel(context.Background())
 	defer appCancel()
 
-	// Инициализация пула соединений СУБД
-	_, pool, err := db_init()
+	// Инициализация GORM и пула соединений СУБД
+	_, db, sqlDB, err := db_init()
 	if err != nil {
 		slog.Error("Критическая ошибка инициализации БД", "error", err)
 		return
 	}
-	defer pool.Close()
+	defer sqlDB.Close()
 
 	// Сборка слоев
-	repo := database.NewRepo(pool)
+	repo := database.NewRepo(db)
 	chnl_task := make(chan *service.Task, 20)
 	var wg sync.WaitGroup
 
