@@ -14,7 +14,7 @@ down:
 
 # Просмотр логов основного приложения в реальном времени
 logs:
-	docker compose logs -f app
+	docker compose logs -f app_server
 
 # Просмотр статуса контейнеров основного окружения
 ps:

@@ -24,6 +24,9 @@ func (m *successMockRepository) RecGetAll(ctx context.Context) ([]*service.Task,
 func (m *successMockRepository) RecGetbyId(ctx context.Context, id string) (*service.Task, error) {
 	return nil, nil
 }
+func (m *successMockRepository) RecGetUnfinished(ctx context.Context) ([]*service.Task, error) {
+	return nil, nil
+}
 func (m *successMockRepository) Ping(ctx context.Context) error {
 	return nil
 }

@@ -81,6 +81,25 @@ func main() {
 	// Запуск пула фоновых воркеров
 	background.WorkerInit(chnl_task, &wg, appCtx, repo)
 
+	// Восстановление незавершённых задач из БД после предыдущего быстрого shutdown
+	unfinishedTasks, err := repo.RecGetUnfinished(appCtx)
+	if err != nil {
+		slog.Error("Ошибка при восстановлении незавершённых задач из БД", "error", err)
+	} else {
+		slog.Info("Проверка незавершённых задач в БД при старте", slog.Int("count", len(unfinishedTasks)))
+		if len(unfinishedTasks) > 0 {
+			go func(tasks []*service.Task) {
+				for _, t := range tasks {
+					select {
+					case chnl_task <- t:
+					case <-appCtx.Done():
+						return
+					}
+				}
+			}(unfinishedTasks)
+		}
+	}
+
 	// Инициализация слоя HTTP-хендлеров и роутера
 	taskHandler := web.NewTaskHandler(repo, chnl_task)
 
@@ -133,12 +152,12 @@ func main() {
 
 	// Отменяем родительский контекст приложения
 	appCancel()
+	slog.Info("Контекст отменен. Ожидание завершения только активных воркеров...")
+
+	// 3. Ждем завершения ТОЛЬКО тех задач, которые уже взяты в работу
+	wg.Wait()
 
 	// Закрываем канал задач
 	close(chnl_task)
 	slog.Info("Канал закрыт. Ожидание завершения обработки буфера...")
-
-	// Ждем, пока воркеры полностью опустошат буфер (до 20 элементов)
-	wg.Wait()
-	slog.Info("Все фоновые процессы штатно завершены. Выключение приложения.")
 }

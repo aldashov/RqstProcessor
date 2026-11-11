@@ -63,23 +63,23 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//декодирование входящего JSON
+	// декодирование входящего JSON
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest) // Код 400
-		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON format"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Invalid JSON format"})
 		return
 	}
 
-	//валидация данных
+	// валидация данных
 	if strings.TrimSpace(input.Title) == "" {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest) // Код 400
-		json.NewEncoder(w).Encode(map[string]string{"error": "Title is required"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Title is required"})
 		return
 	}
 
-	//инициализация переменной Task
+	// инициализация переменной Task
 	task := &service.Task{
 		Id:        uuid.New().String(),
 		Title:     input.Title,
@@ -88,28 +88,29 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: time.Now(),
 	}
 
-	//сохранение запроса в БД
+	// сохранение запроса в БД
 	if err := h.repo.RecInsert(r.Context(), task); err != nil {
-		// КРИТИЧЕСКАЯ ТОЧКА: Полную ошибку пишем ТОЛЬКО в системный лог на сервере!
 		slog.Error("Ошибка физической записи в PostgreSQL",
 			slog.String("id", task.Id),
 			"raw_error", err,
 		)
 
-		// Клиенту отдаем замаскированный, безопасный ответ и Код 500
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError) // Код 500
-		json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
 		return
 	}
 
-	//передача задачи в канал воркерам для фоновой обработки
+	// Снимаем копию ДО передачи указателя в канал воркерам, чтобы исключить Data Race
+	respTask := *task
+
+	// передача задачи в канал воркерам для фоновой обработки
 	h.taskChan <- task
 
-	//возврат ответа клиенту
+	// возврат ответа клиенту
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(task)
+	_ = json.NewEncoder(w).Encode(respTask)
 }
 
 func (h *TaskHandler) DeleteTask(w http.ResponseWriter, r *http.Request) {
@@ -122,33 +123,35 @@ func (h *TaskHandler) DeleteTask(w http.ResponseWriter, r *http.Request) {
 
 	idStr := strings.TrimPrefix(r.URL.Path, "/tasks/")
 
-	// 2. Валидация формата: если это не UUID, сразу отсекаем по Коду 400 Bad Task
+	// Валидация формата: если это не UUID, сразу отсекаем по Коду 400 Bad Request
 	if _, err := uuid.Parse(idStr); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Invalid UUID format"})
 		return
 	}
 
-	//инициализация переменной Task
 	task := &service.Task{
 		Id: idStr,
 	}
 
-	//удаление запроса из БД
+	// удаление запроса из БД
 	if err := h.repo.RecDelete(r.Context(), task); err != nil {
-		// Если задача в статусе processing, RecDelete вернет ошибку RowsAffected == 0.
-		// Отсекаем это как ошибку клиента (400 Bad Task)
 		slog.Warn("Отклонено удаление записи", "id", idStr, "reason", err.Error())
 
-		// Клиенту отдаем замаскированный, безопасный ответ и Код 500
-		w.WriteHeader(http.StatusInternalServerError) // Код 500
+		if strings.Contains(err.Error(), "There are no deleted records") {
+			w.WriteHeader(http.StatusBadRequest) // Код 400 (задача не найдена или в статусе processing)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Task cannot be deleted while processing or not found"})
+			return
+		}
+
+		w.WriteHeader(http.StatusInternalServerError) // Код 500 при техническом сбое БД
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
 		return
 	}
 
 	slog.Info("Запись успешно удалена из СУБД", "id", idStr)
 
-	//возврат ответа клиенту
+	// возврат ответа клиенту
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]string{"result": "OK"})
 }
@@ -159,29 +162,22 @@ func (h *TaskHandler) GetAllTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Вызываем метод репозитория для чтения массива структур
-	// Передаем контекст запроса r.Context() для возможности отмены операции сетью
 	tasks, err := h.repo.RecGetAll(r.Context())
 	if err != nil {
-		// ТРЕБОВАНИЕ 2.6: Полный системный лог со сбоем пишем строго на сервере
 		slog.Error("Не удалось вычитать список задач из СУБД", "error", err)
 
-		// Клиенту отдаем безопасную маску и код 500
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusInternalServerError)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Internal server error"})
 		return
 	}
 
-	// 2. Если в базе пока нет ни одной задачи, PostgreSQL вернет пустой срез (nil)
-	// Чтобы клиент получил красивый пустой JSON-массив [], а не null, делаем страховку
 	if tasks == nil {
 		tasks = make([]*service.Task, 0)
 	}
 
-	// 3. Успешный ответ: Код 200 OK и JSON-массив данных
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK) // Код 200
+	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(tasks)
 }
 
@@ -193,28 +189,22 @@ func (h *TaskHandler) GetTaskbyId(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	// Извлекаем ID из URL
-	//idStr := r.PathValue("id")
 	idStr := strings.TrimPrefix(r.URL.Path, "/tasks/")
 
-	// Валидация формата: если это не UUID, сразу отсекаем по Коду 400 Bad Task
 	if _, err := uuid.Parse(idStr); err != nil {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]string{"error": "Invalid UUID format"})
 		return
 	}
 
-	// Вызываем оптимизированный метод репозитория (передаем контекст и строку ID)
 	task, err := h.repo.RecGetbyId(r.Context(), idStr)
 	if err != nil {
-		// Проверяем: если запись просто не найдена в таблице
 		if errors.Is(err, pgx.ErrNoRows) {
 			w.WriteHeader(http.StatusNotFound) // Код 404
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Task not found"})
 			return
 		}
 
-		// Реальный технический сбой пишем строго в логи бэкенда
 		slog.Error("Критический сбой СУБД при поиске по ID", "id", idStr, "error", err)
 
 		w.WriteHeader(http.StatusInternalServerError) // Код 500
@@ -222,7 +212,6 @@ func (h *TaskHandler) GetTaskbyId(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Успешный ответ: Код 200 OK и JSON одной конкретной задачи
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(task)
 }
@@ -237,6 +226,10 @@ func (h *TaskHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	if err := h.repo.Ping(r.Context()); err != nil {
 		slog.Error("Ошибка при проверке health: БД не доступна", "error", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "unhealthy"})
+		return
 	}
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
 }

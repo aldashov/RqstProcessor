@@ -24,5 +24,6 @@ type TaskRepo interface {
 	RecDelete(ctx context.Context, task *Task) error
 	RecGetAll(ctx context.Context) ([]*Task, error)
 	RecGetbyId(ctx context.Context, id string) (*Task, error)
+	RecGetUnfinished(ctx context.Context) ([]*Task, error)
 	Ping(ctx context.Context) error
 }

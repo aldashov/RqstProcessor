@@ -55,30 +55,44 @@ func WorkerRun(chnl <-chan *service.Task, wg *sync.WaitGroup, pCtx context.Conte
 
 // ф-ия запуска Воркера с указанием длительности обработки
 func WorkerRunWithDuration(chnl <-chan *service.Task, wg *sync.WaitGroup, pCtx context.Context, repo service.TaskRepo, duration time.Duration) error {
-	//завершение таска в WaitGroup при выходе из функции
+	// завершение таска в WaitGroup при выходе из функции
 	defer wg.Done()
 
 	for {
+		// 1. Приоритетная проверка отмены контекста ДО чтения следующей задачи из буфера
+		if pCtx.Err() != nil {
+			slog.Info("Завершение работы воркера по сигналу остановки (остаток очереди не вычитывается)",
+				"reason", pCtx.Err(),
+			)
+			return pCtx.Err()
+		}
+
 		select {
 		case <-pCtx.Done():
-			// контекст отменен. дорабатываем все оставшиеся в буфере канала задачи до закрытия канала
-			for task := range chnl {
-				processTask(repo, task, duration)
-			}
-			slog.Info("Завершение работы воркера после обработки остатка очереди",
+			// Контекст отменён: немедленно выходим, не трогая оставшиеся в буфере задачи
+			slog.Info("Завершение работы воркера по сигналу остановки",
 				"reason", pCtx.Err(),
 			)
 			return pCtx.Err()
 
 		case task, ok := <-chnl:
-			//получение значения из канала
+			// Получение значения из канала
 			if !ok {
-				//канал закрыт( все задачи закрыты)
+				// Канал закрыт (все задачи закрыты)
 				slog.Info("Все задачи обработаны, канал воркеров закрыт")
 				return nil
 			}
 
-			// Доводим текущую задачу до статуса done без обрыва по внутреннему select
+			// 2. Защита от псевдослучайного выбора select в Go:
+			// если pCtx отменился одновременно с появлением задачи в буфере, в работу её НЕ берём
+			if pCtx.Err() != nil {
+				slog.Info("Сигнал остановки получен до старта задачи, задача оставлена в очереди",
+					slog.String("id", task.Id),
+				)
+				return pCtx.Err()
+			}
+
+			// Доводим текущую взятую задачу до статуса done без обрыва по внутреннему select
 			processTask(repo, task, duration)
 		}
 	}
@@ -88,10 +102,10 @@ func WorkerRunWithDuration(chnl <-chan *service.Task, wg *sync.WaitGroup, pCtx c
 func WorkerInit(chnl <-chan *service.Task, wg *sync.WaitGroup, pCtx context.Context, repo service.TaskRepo) (err error) {
 	// запуск трех воркеров
 	for i := 0; i < 3; i++ {
-		//увеличение счетчика заданий группы воркеров
+		// увеличение счетчика заданий группы воркеров
 		wg.Add(1)
 
-		//запуск горутины Воркера
+		// запуск горутины Воркера
 		go WorkerRun(chnl, wg, pCtx, repo)
 	}
 

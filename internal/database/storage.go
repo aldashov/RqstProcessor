@@ -107,3 +107,20 @@ func (rd *Repository) Ping(pCtx context.Context) error {
 
 	return sqlDB.PingContext(lCtx)
 }
+
+// RecGetUnfinished возвращает все незавершённые задачи (status != "done") для восстановления очереди при старте
+func (rd *Repository) RecGetUnfinished(pCtx context.Context) ([]*service.Task, error) {
+	lCtx, lCtxCncl := context.WithTimeout(pCtx, 5*time.Second)
+	defer lCtxCncl()
+
+	var tasks []*service.Task
+	err := rd.db.WithContext(lCtx).
+		Where("status <> ?", "done").
+		Order("createdat ASC").
+		Find(&tasks).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return tasks, nil
+}
